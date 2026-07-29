@@ -1,6 +1,7 @@
 import type { Env } from "./index.js";
 import { TABLE, selectRows, insertRow, updateRow, callRpc, currentUserId } from "./supabase-client.js";
 import { enrich, detectSourceType } from "./enrich.js";
+import { deriveTitle, deriveExcerpt } from "./titling.js";
 import { pushToZeus, type ZeusSyncResult } from "./zeus.js";
 
 export interface Swipe {
@@ -11,6 +12,8 @@ export interface Swipe {
   reason: string;
   topic_tags: string[];
   title: string;
+  /** 見出しを自動で付けたか。人が指定した見出しなら false（作り直しの対象外） */
+  title_auto: boolean;
   source_type: string;
   author: string | null;
   excerpt: string | null;
@@ -40,6 +43,32 @@ export interface SwipeListItem extends Swipe {
 
 const STATUS_ACTIVE = "未活用";
 const STATUS_USED   = "活用済";
+
+/**
+ * リンク先のページ題名・説明を取る。
+ * アプリ側に既にある /api/ogp を呼ぶだけにして、同じ解析をここに作らない
+ * （2026-07-17 Decision「外部ベータ API への直依存禁止・車輪を集める」に沿う）。
+ * 取れなくても登録は止めない。
+ */
+async function fetchPageMeta(env: Env, url: string): Promise<{ title: string; description: string }> {
+  const base = (env.SWIPE_APP_BASE ?? "").replace(/\/$/, "");
+  if (!base || !/^https?:\/\//i.test(url)) return { title: "", description: "" };
+
+  try {
+    const res = await fetch(`${base}/api/ogp`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ url }),
+      signal:  AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { title: "", description: "" };
+    const data = (await res.json()) as { fetched?: boolean; title?: string | null; description?: string | null };
+    if (!data?.fetched) return { title: "", description: "" };
+    return { title: data.title ?? "", description: data.description ?? "" };
+  } catch {
+    return { title: "", description: "" };
+  }
+}
 
 /** 保存の最低条件（要件 v1.7 §5 F1・受け入れ基準5）。DB 側にも同じ制約がある。 */
 function assertSavable(input: { reason?: string; url?: string; body?: string; file_url?: string }): void {
@@ -89,20 +118,36 @@ export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
   const ai = needsEnrich ? await enrich(env, { url, body, reason }) : {};
   const aiWorked = Object.values(ai).some(v => v !== undefined);
 
-  // AI 補完が効かなかったときの見出しの決め方（アプリ側の登録画面と同じ規則に揃える）。
-  // URL があれば URL、本文があれば本文の冒頭、どちらも無ければ理由を使う。
-  const fallbackTitle = url || (body ? body.slice(0, 40) : reason);
+  // 見出しと抜粋は1か所の規則で決める（src/titling.ts）。
+  // アプリ側の src/lib/titling.js と同じ内容にしてあるので、
+  // 画面から入れても AI から入れても同じ見出しになる。
+  // URL があるときはページの題名を取りに行く（AI が使えない期間でもここは効く）。
+  const page = url ? await fetchPageMeta(env, url) : { title: "", description: "" };
+
+  const titled = deriveTitle({
+    manualTitle: input.title,
+    pageTitle:   page.title,
+    aiTitle:     ai.title,
+    body,
+  });
+  const excerpt = deriveExcerpt({
+    manualExcerpt:   input.excerpt,
+    aiExcerpt:       ai.excerpt,
+    pageDescription: page.description,
+    body,
+  });
 
   const row = {
     user_id:      currentUserId(env),
     source_url:   url || null,
     body:         body || null,
     reason,
-    title:        (input.title ?? ai.title ?? fallbackTitle).slice(0, 200),
+    title:        titled.title,
+    title_auto:   titled.auto,
     topic_tags:   input.topic_tags?.length ? input.topic_tags : (ai.topic_tags ?? []),
     source_type:  input.source_type ?? ai.source_type ?? detectSourceType(url, body.length > 0),
     author:       input.author ?? ai.author ?? null,
-    excerpt:      input.excerpt ?? ai.excerpt ?? null,
+    excerpt:      excerpt || null,
     content_axis: input.content_axis ?? ai.content_axis ?? null,
     visibility:   input.visibility ?? "private",
     status:       STATUS_ACTIVE,
@@ -221,7 +266,11 @@ export async function updateSwipe(env: Env, input: UpdateInput): Promise<Swipe> 
   if (input.reason       !== undefined) patch.reason       = input.reason.trim();
   if (input.url          !== undefined) patch.source_url   = input.url.trim() || null;
   if (input.body         !== undefined) patch.body         = input.body.trim() || null;
-  if (input.title        !== undefined) patch.title        = input.title;
+  if (input.title        !== undefined) {
+    patch.title      = input.title;
+    // 人が見出しを指定した＝以後は自動の作り直し対象から外す
+    patch.title_auto = false;
+  }
   if (input.topic_tags   !== undefined) patch.topic_tags   = input.topic_tags;
   if (input.source_type  !== undefined) patch.source_type  = input.source_type;
   if (input.author       !== undefined) patch.author       = input.author || null;
