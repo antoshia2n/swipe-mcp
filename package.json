@@ -1,0 +1,23 @@
+{
+  "name": "swipe-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "スワイプファイル（お手本・見本データ）専用の MCP サーバー",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.0.9",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "agents": "0.10.2",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260422.1",
+    "typescript": "5.9.3",
+    "wrangler": "3.114.17"
+  }
+}
