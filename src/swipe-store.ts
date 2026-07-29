@@ -98,9 +98,16 @@ export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
     zeus_synced:  false,
   };
 
-  const swipe = await insertRow<Swipe>(env, TABLE, row);
+  const inserted = await insertRow<Swipe>(env, TABLE, row);
   // Zeus 索引へ登録する。失敗しても登録は成立させる（§F5）
-  const zeus = await pushToZeus(env, swipe);
+  const zeus = await pushToZeus(env, inserted);
+
+  // 同期後の値を返す。挿入直後のスナップショットを返すと
+  // zeus_synced=false のまま見えて「連携失敗」と読み違えるため。
+  let swipe = inserted;
+  if (zeus.status === "pushed") {
+    swipe = await fetchWithoutCounting(env, inserted.id).catch(() => inserted);
+  }
   return { swipe, ai_enriched: aiWorked, zeus };
 }
 
