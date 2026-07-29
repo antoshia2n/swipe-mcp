@@ -71,14 +71,16 @@ async function fetchPageMeta(env: Env, url: string): Promise<{ title: string; de
 }
 
 /** 保存の最低条件（要件 v1.7 §5 F1・受け入れ基準5）。DB 側にも同じ制約がある。 */
-function assertSavable(input: { reason?: string; url?: string; body?: string; file_url?: string }): void {
+function assertSavable(input: { reason?: string; title?: string; url?: string; body?: string; file_url?: string }): void {
   const reason = (input.reason ?? "").trim();
+  const title  = (input.title ?? "").trim();
   const has =
     (input.url ?? "").trim().length > 0 ||
     (input.body ?? "").trim().length > 0 ||
     (input.file_url ?? "").trim().length > 0;
 
-  if (!reason) throw new Error("reason_required: なぜ良いかの1行は必須です");
+  if (!reason) throw new Error("reason_required: なぜ良いか・要約の1行は必須です");
+  if (!title)  throw new Error("title_required: 見出しは必須です");
   if (!has)    throw new Error("substance_required: url / body / file_url のうち少なくとも1つが必要です");
 }
 
@@ -86,9 +88,10 @@ function assertSavable(input: { reason?: string; url?: string; body?: string; fi
 
 export interface AddInput {
   reason: string;
+  /** 見出し。必須（2026-07-29 の方針変更。AI が登録する運用が主のため人手はかからない） */
+  title: string;
   url?: string;
   body?: string;
-  title?: string;
   topic_tags?: string[];
   source_type?: string;
   author?: string;

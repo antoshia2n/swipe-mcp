@@ -28,12 +28,12 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
   /* ── 1. swipe__add ─────────────────────────────────────────────────── */
   server.tool(
     "swipe__add",
-    "スワイプ（お手本・見本データ）を1件登録する。reason は必須。url と body は少なくとも一方が必要（両方でも可）。title / topic_tags / content_axis / excerpt / source_type を省略すると AI が補完する。タグは既存タグに寄せて提案される。戻り値の ai_enriched が false のときは AI 補完が効いておらず、title などは機械的な埋め合わせになっている。戻り値: { ok, ai_enriched, swipe }",
+    "スワイプ（お手本・見本データ）を1件登録する。title と reason は必須。url と body は少なくとも一方が必要（両方でも可）。topic_tags / content_axis / excerpt / source_type を省略すると AI が補完する。タグは既存タグに寄せて提案される。戻り値の ai_enriched が false のときは AI 補完が効いておらず、title などは機械的な埋め合わせになっている。戻り値: { ok, ai_enriched, swipe }",
     {
-      reason:       z.string().min(1).describe("なぜ優れているか1行。必須"),
+      title:        z.string().min(1).describe("見出し。必須。何の素材か一目で分かる短い言葉"),
+      reason:       z.string().min(1).describe("なぜ優れているか・要約の1行。必須。あとで素材を選ぶときの唯一の手がかりになる"),
       url:          z.string().optional().describe("出典URL。body が無い場合は必須"),
       body:         z.string().optional().describe("素材の中身そのもの（書き起こし・PDFから読んだ本文）。url が無い場合は必須"),
-      title:        z.string().optional().describe("見出し。省略時は AI が生成"),
       topic_tags:   z.array(z.string()).optional().describe("キーワードタグ（自由入力）。省略時は AI が既存タグに寄せて提案"),
       source_type:  SOURCE_TYPE.optional().describe("媒体。省略時は URL・投入経路から自動判定"),
       content_axis: CONTENT_AXIS.optional().describe("発信の軸。省略時は AI が判定"),
@@ -56,15 +56,15 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
   /* ── 2. swipe__bulk_add ────────────────────────────────────────────── */
   server.tool(
     "swipe__bulk_add",
-    "スワイプを複数件まとめて登録する。各件が swipe__add と同じ条件（reason 必須・url か body のいずれか必要）を満たすこと。1件ずつ処理し、失敗した件だけ理由を返す。戻り値: { ok, added, failed, results }",
+    "スワイプを複数件まとめて登録する。各件が swipe__add と同じ条件（title と reason は必須・url か body のいずれか必要）を満たすこと。1件ずつ処理し、失敗した件だけ理由を返す。戻り値: { ok, added, failed, results }",
     {
       items: z
         .array(
           z.object({
-            reason:       z.string().min(1).describe("なぜ優れているか1行。必須"),
+            title:        z.string().min(1).describe("見出し。必須"),
+            reason:       z.string().min(1).describe("なぜ優れているか・要約の1行。必須"),
             url:          z.string().optional(),
             body:         z.string().optional(),
-            title:        z.string().optional(),
             topic_tags:   z.array(z.string()).optional(),
             source_type:  SOURCE_TYPE.optional(),
             content_axis: CONTENT_AXIS.optional(),
