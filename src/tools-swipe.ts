@@ -42,10 +42,11 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
       visibility:   VISIBILITY.optional().describe("private（既定・自分用）/ sample（将来 生徒に見せる見本）"),
     },
     async (args) => {
-      const { swipe, ai_enriched } = await addSwipe(env, args);
+      const { swipe, ai_enriched, zeus } = await addSwipe(env, args);
       return asMcpTextResult({
         ok: true,
         ai_enriched,
+        zeus,
         note: ai_enriched ? undefined : "AI補完が効きませんでした（Anthropic の残高不足など）。title / topic_tags は機械的な埋め合わせです。残高が戻ったら swipe__update で整えてください",
         swipe,
       });
@@ -77,11 +78,11 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
         .describe("登録するスワイプの配列（最大50件）"),
     },
     async (args) => {
-      const results: Array<{ index: number; ok: boolean; id?: string; ai_enriched?: boolean; error?: string }> = [];
+      const results: Array<{ index: number; ok: boolean; id?: string; ai_enriched?: boolean; zeus_status?: string; error?: string }> = [];
       for (const [index, item] of args.items.entries()) {
         try {
-          const { swipe, ai_enriched } = await addSwipe(env, item);
-          results.push({ index, ok: true, id: swipe.id, ai_enriched });
+          const { swipe, ai_enriched, zeus } = await addSwipe(env, item);
+          results.push({ index, ok: true, id: swipe.id, ai_enriched, zeus_status: zeus.status });
         } catch (err) {
           results.push({ index, ok: false, error: err instanceof Error ? err.message : String(err) });
         }

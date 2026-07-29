@@ -13,6 +13,7 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
     ["SUPABASE_URL", env.SUPABASE_URL],
     ["SUPABASE_SERVICE_ROLE_KEY", env.SUPABASE_SERVICE_ROLE_KEY],
     ["ANTHROPIC_API_KEY", env.ANTHROPIC_API_KEY],
+    ["ZEUS_EXTERNAL_SECRET", env.ZEUS_EXTERNAL_SECRET],
   ];
   for (const [name, value] of required) {
     checks.push({

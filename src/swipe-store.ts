@@ -1,6 +1,7 @@
 import type { Env } from "./index.js";
 import { TABLE, selectRows, insertRow, updateRow, callRpc, currentUserId } from "./supabase-client.js";
 import { enrich, detectSourceType } from "./enrich.js";
+import { pushToZeus, type ZeusSyncResult } from "./zeus.js";
 
 export interface Swipe {
   id: string;
@@ -60,6 +61,8 @@ export interface AddResult {
   swipe: Swipe;
   /** AI 補完が実際に効いたか。false のときは見出し・タグが機械的な埋め合わせになる */
   ai_enriched: boolean;
+  /** Zeus 索引への登録結果（失敗しても登録自体は成功している） */
+  zeus: ZeusSyncResult;
 }
 
 export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
@@ -96,7 +99,9 @@ export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
   };
 
   const swipe = await insertRow<Swipe>(env, TABLE, row);
-  return { swipe, ai_enriched: aiWorked };
+  // Zeus 索引へ登録する。失敗しても登録は成立させる（§F5）
+  const zeus = await pushToZeus(env, swipe);
+  return { swipe, ai_enriched: aiWorked, zeus };
 }
 
 /* ── 検索（参照回数は増やさない・受け入れ基準8） ─────────────────────────── */

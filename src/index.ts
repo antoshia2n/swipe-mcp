@@ -25,6 +25,9 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string;
   // AI 補完
   ANTHROPIC_API_KEY: string;
+  // Zeus 索引連携（§F5）
+  ZEUS_EXTERNAL_SECRET: string;
+  SWIPE_APP_BASE: string;
 }
 
 function createSwipeMcpServer(env: Env): McpServer {

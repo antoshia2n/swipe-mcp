@@ -7,6 +7,10 @@
   "observability": {
     "enabled": true
   },
+  // Zeus 索引の正本リンクに使うアプリのURL（秘密の値ではないのでここに書く）
+  "vars": {
+    "SWIPE_APP_BASE": "https://swipe.shia2n.jp"
+  },
   // スワイプ専用の OAuth 保管領域。shia2n-mcp とは別の名前空間を使う
   // （共用すると片方の接続キーでもう片方のツールにも入れてしまうため）
   "kv_namespaces": [
