@@ -99,7 +99,7 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
   /* ── 3. swipe__search（参照回数は増やさない） ──────────────────────── */
   server.tool(
     "swipe__search",
-    "スワイプを条件検索する。keyword は title / reason / body / excerpt / author の部分一致。並び順は既定が登録日降順で、sort='ref' を明示したときだけ参照回数の多い順（同数は登録日降順）。このツールでは ref_count は増えない。戻り値: { ok, count, swipes }",
+    "スワイプを条件検索する。keyword は title / reason / body / excerpt / author の部分一致（検索は本文全体が対象）。ただし戻り値の body は先頭120字の抜粋で、全文は含まない。body_chars（本文の総文字数）と body_truncated（続きがあるか）で判断し、中身を読む必要があるものだけ swipe__get で全文を取ること。並び順は既定が登録日降順で、sort='ref' を明示したときだけ参照回数の多い順（同数は登録日降順）。このツールでは ref_count は増えない。戻り値: { ok, count, swipes }",
     {
       keyword:      z.string().optional().describe("部分一致で探す語"),
       tags:         z.array(z.string()).optional().describe("この全てのタグを含むものに絞る"),

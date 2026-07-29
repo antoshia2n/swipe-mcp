@@ -27,6 +27,17 @@ export interface Swipe {
   updated_at: string;
 }
 
+/** 一覧に出すときの本文プレビュー長（全角換算）。全文は swipe__get で取る。 */
+const BODY_PREVIEW_CHARS = 120;
+
+/** 検索結果1件。body は先頭だけの抜粋になっている（全文は含まない）。 */
+export interface SwipeListItem extends Swipe {
+  /** 本文の総文字数。0 なら本文なし */
+  body_chars: number;
+  /** true のとき body は途中まで。全文は swipe__get で取得する */
+  body_truncated: boolean;
+}
+
 const STATUS_ACTIVE = "未活用";
 const STATUS_USED   = "活用済";
 
@@ -128,7 +139,24 @@ function safeKeyword(kw: string): string {
   return kw.replace(/[,()%*\\"']/g, " ").trim();
 }
 
-export async function searchSwipes(env: Env, input: SearchInput): Promise<Swipe[]> {
+/**
+ * 一覧用に本文を切り詰める。
+ * 検索は「どれを読むか選ぶ」ための操作なので、本文全文は返さない
+ * （長文素材が1件混ざるだけで呼び出し側の読み込み量が跳ね上がるため）。
+ */
+function toListItem(row: Swipe): SwipeListItem {
+  const full  = row.body ?? "";
+  const chars = full.length;
+  const cut   = chars > BODY_PREVIEW_CHARS;
+  return {
+    ...row,
+    body: chars ? (cut ? `${full.slice(0, BODY_PREVIEW_CHARS)}…` : full) : null,
+    body_chars: chars,
+    body_truncated: cut,
+  };
+}
+
+export async function searchSwipes(env: Env, input: SearchInput): Promise<SwipeListItem[]> {
   const uid    = currentUserId(env);
   const params: string[] = [`user_id=eq.${encodeURIComponent(uid)}`, "select=*"];
 
@@ -152,7 +180,8 @@ export async function searchSwipes(env: Env, input: SearchInput): Promise<Swipe[
   params.push(input.sort === "ref" ? "order=ref_count.desc,created_at.desc" : "order=created_at.desc");
   params.push(`limit=${Math.min(Math.max(input.limit ?? 20, 1), 100)}`);
 
-  return selectRows<Swipe>(env, `${TABLE}?${params.join("&")}`);
+  const rows = await selectRows<Swipe>(env, `${TABLE}?${params.join("&")}`);
+  return rows.map(toListItem);
 }
 
 /* ── 1件取得（呼び出しのたびに +1・要件 §F4「1回」の定義） ──────────────── */
@@ -204,12 +233,20 @@ export async function updateSwipe(env: Env, input: UpdateInput): Promise<Swipe> 
 
   if (!Object.keys(patch).length) throw new Error("no_fields: 更新する項目が指定されていません");
 
-  // 保存の最低条件を壊す更新は受け付けない（現在値と突き合わせて判定する）
+  // 保存の最低条件を壊す更新は受け付けない（現在値と突き合わせて判定する）。
+  //
+  // 注意：ここで ?? を使ってはいけない。空文字で更新すると patch の値は null になり、
+  // ?? では「指定なし」と同じ扱いになって現在値へ落ちてしまう。その結果この検査を
+  // 素通りし、DB 側の制約が英語のまま表に出ていた（2026-07-29 検出）。
+  // 「項目が指定されたか」は patch にキーがあるかで判定する。
   const current = await fetchWithoutCounting(env, input.id);
+  const nextValue = (key: string, fallback: string | null): string =>
+    key in patch ? ((patch[key] as string | null) ?? "") : (fallback ?? "");
+
   assertSavable({
-    reason:   (patch.reason as string | undefined) ?? current.reason,
-    url:      (patch.source_url as string | null | undefined) ?? current.source_url ?? "",
-    body:     (patch.body as string | null | undefined) ?? current.body ?? "",
+    reason:   nextValue("reason", current.reason),
+    url:      nextValue("source_url", current.source_url),
+    body:     nextValue("body", current.body),
     file_url: current.file_url ?? "",
   });
 
