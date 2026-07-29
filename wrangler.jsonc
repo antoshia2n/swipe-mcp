@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "swipe-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true
+  },
+  // スワイプ専用の OAuth 保管領域。shia2n-mcp とは別の名前空間を使う
+  // （共用すると片方の接続キーでもう片方のツールにも入れてしまうため）
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "3b3595ce93bf4853baff145440741927"
+    }
+  ]
+}
