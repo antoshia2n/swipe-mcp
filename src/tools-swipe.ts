@@ -28,7 +28,7 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
   /* ── 1. swipe__add ─────────────────────────────────────────────────── */
   server.tool(
     "swipe__add",
-    "スワイプ（お手本・見本データ）を1件登録する。reason は必須。url と body は少なくとも一方が必要（両方でも可）。title / topic_tags / content_axis / excerpt / source_type を省略すると AI が補完する。タグは既存タグに寄せて提案される。戻り値: 登録されたレコード全体",
+    "スワイプ（お手本・見本データ）を1件登録する。reason は必須。url と body は少なくとも一方が必要（両方でも可）。title / topic_tags / content_axis / excerpt / source_type を省略すると AI が補完する。タグは既存タグに寄せて提案される。戻り値の ai_enriched が false のときは AI 補完が効いておらず、title などは機械的な埋め合わせになっている。戻り値: { ok, ai_enriched, swipe }",
     {
       reason:       z.string().min(1).describe("なぜ優れているか1行。必須"),
       url:          z.string().optional().describe("出典URL。body が無い場合は必須"),
@@ -41,7 +41,15 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
       excerpt:      z.string().optional().describe("一覧に出す短い抜粋（全角200字程度）。省略時は AI が生成"),
       visibility:   VISIBILITY.optional().describe("private（既定・自分用）/ sample（将来 生徒に見せる見本）"),
     },
-    async (args) => asMcpTextResult({ ok: true, swipe: await addSwipe(env, args) })
+    async (args) => {
+      const { swipe, ai_enriched } = await addSwipe(env, args);
+      return asMcpTextResult({
+        ok: true,
+        ai_enriched,
+        note: ai_enriched ? undefined : "AI補完が効きませんでした（Anthropic の残高不足など）。title / topic_tags は機械的な埋め合わせです。残高が戻ったら swipe__update で整えてください",
+        swipe,
+      });
+    }
   );
 
   /* ── 2. swipe__bulk_add ────────────────────────────────────────────── */
@@ -69,11 +77,11 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
         .describe("登録するスワイプの配列（最大50件）"),
     },
     async (args) => {
-      const results: Array<{ index: number; ok: boolean; id?: string; error?: string }> = [];
+      const results: Array<{ index: number; ok: boolean; id?: string; ai_enriched?: boolean; error?: string }> = [];
       for (const [index, item] of args.items.entries()) {
         try {
-          const swipe = await addSwipe(env, item);
-          results.push({ index, ok: true, id: swipe.id });
+          const { swipe, ai_enriched } = await addSwipe(env, item);
+          results.push({ index, ok: true, id: swipe.id, ai_enriched });
         } catch (err) {
           results.push({ index, ok: false, error: err instanceof Error ? err.message : String(err) });
         }

@@ -56,7 +56,13 @@ export interface AddInput {
   visibility?: string;
 }
 
-export async function addSwipe(env: Env, input: AddInput): Promise<Swipe> {
+export interface AddResult {
+  swipe: Swipe;
+  /** AI 補完が実際に効いたか。false のときは見出し・タグが機械的な埋め合わせになる */
+  ai_enriched: boolean;
+}
+
+export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
   assertSavable(input);
 
   const url    = (input.url ?? "").trim();
@@ -67,13 +73,18 @@ export async function addSwipe(env: Env, input: AddInput): Promise<Swipe> {
   const needsEnrich =
     !input.title || !input.topic_tags?.length || !input.content_axis || !input.excerpt || !input.source_type;
   const ai = needsEnrich ? await enrich(env, { url, body, reason }) : {};
+  const aiWorked = Object.values(ai).some(v => v !== undefined);
+
+  // AI 補完が効かなかったときの見出しの決め方（アプリ側の登録画面と同じ規則に揃える）。
+  // URL があれば URL、本文があれば本文の冒頭、どちらも無ければ理由を使う。
+  const fallbackTitle = url || (body ? body.slice(0, 40) : reason);
 
   const row = {
     user_id:      currentUserId(env),
     source_url:   url || null,
     body:         body || null,
     reason,
-    title:        (input.title ?? ai.title ?? (url || reason)).slice(0, 200),
+    title:        (input.title ?? ai.title ?? fallbackTitle).slice(0, 200),
     topic_tags:   input.topic_tags?.length ? input.topic_tags : (ai.topic_tags ?? []),
     source_type:  input.source_type ?? ai.source_type ?? detectSourceType(url, body.length > 0),
     author:       input.author ?? ai.author ?? null,
@@ -84,7 +95,8 @@ export async function addSwipe(env: Env, input: AddInput): Promise<Swipe> {
     zeus_synced:  false,
   };
 
-  return insertRow<Swipe>(env, TABLE, row);
+  const swipe = await insertRow<Swipe>(env, TABLE, row);
+  return { swipe, ai_enriched: aiWorked };
 }
 
 /* ── 検索（参照回数は増やさない・受け入れ基準8） ─────────────────────────── */
