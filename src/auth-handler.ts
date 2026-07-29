@@ -142,8 +142,11 @@ function buildConsentHtml(
 </html>`;
 }
 
-export const AuthHandler = {
-  async fetch(request: Request, env: AuthEnv): Promise<Response> {
+// 型は OAuthProvider 側の宣言（env は unknown）に合わせ、中で AuthEnv に確定させる。
+// 実行時の動きは変わらない。index.ts の mcpApiHandler と同じ書き方。
+export const AuthHandler: ExportedHandler & Pick<Required<ExportedHandler>, "fetch"> = {
+  async fetch(request, rawEnv): Promise<Response> {
+    const env = rawEnv as AuthEnv;
     const url = new URL(request.url);
 
     // ─── GET / または /health ─────────────────────────────────────────

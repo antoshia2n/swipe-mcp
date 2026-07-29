@@ -45,8 +45,13 @@ function timingSafeEqual(a: string, b: string): boolean {
   return result === 0;
 }
 
-const mcpApiHandler = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+// workers-oauth-provider の型定義は env を unknown として宣言しているため、
+// 環境変数を型付けしたまま渡すと型が合わない（型チェックが常に赤くなる原因）。
+// 受け取りは unknown のままにして中で型を確定させる。下の resolveExternalToken と
+// 同じ書き方に揃えてあり、実行時の動きは一切変わらない。
+const mcpApiHandler: ExportedHandler & Pick<Required<ExportedHandler>, "fetch"> = {
+  async fetch(request, rawEnv, ctx): Promise<Response> {
+    const env = rawEnv as Env;
     const server = createSwipeMcpServer(env);
     return createMcpHandler(server, { route: "/mcp" })(request, env, ctx);
   },
