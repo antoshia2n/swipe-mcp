@@ -4,6 +4,7 @@ import type { Env } from "./index.js";
 import {
   addSwipe, searchSwipes, getSwipe, updateSwipe, markUsed, listTagCounts,
 } from "./swipe-store.js";
+import { cleanupZeusOrphans } from "./zeus-cleanup.js";
 
 /**
  * スワイプファイル MCP ツール群（要件定義 v1.7 §F4）。
@@ -167,5 +168,16 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
       const tags = await listTagCounts(env);
       return asMcpTextResult({ ok: true, count: tags.length, tags });
     }
+  );
+
+  /* ── 8. swipe__zeus_cleanup ────────────────────────────────────────── */
+  server.tool(
+    "swipe__zeus_cleanup",
+    "削除済みスワイプの Zeus 索引を掃除する。sw_zeus_orphans（掃除待ちの置き場）に溜まった索引IDを Zeus の削除の口へ渡し、索引を消してから置き場の行も片づける。すでに Zeus 側に無いIDも「片づいた」として扱う（索引が無い状態が目的のため）。失敗した分は置き場に残るので、もう一度呼べば続きから進む。何度呼んでも結果は同じ。まず dry_run=true で件数だけ見るのが安全。自動では走らないので、掃除したいときに呼ぶこと。戻り値: { ok, 対象, 索引を消した, もともと無かった, 置き場から外した, 残した, 下見のみ, 詳細 }",
+    {
+      limit:   z.number().int().min(1).max(200).optional().describe("1回で扱う件数（既定100・古いものから）"),
+      dry_run: z.boolean().optional().describe("true にすると件数を数えるだけで何も消さない"),
+    },
+    async (args) => asMcpTextResult(await cleanupZeusOrphans(env, args))
   );
 }

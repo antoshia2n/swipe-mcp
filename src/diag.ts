@@ -54,6 +54,83 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
     }
   }
 
+  // 掃除待ちの置き場（sw_zeus_orphans）。掃除の道具が読む先なので、
+  // 接続と、画面側が書き込もうとしている列の有無を分けて出す。
+  if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    const base = env.SUPABASE_URL.replace(/\/+$/, "");
+    const head = {
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    try {
+      const res = await fetch(
+        `${base}/rest/v1/sw_zeus_orphans?select=id,zeus_item_id,source_url&limit=1`,
+        { headers: head }
+      );
+      checks.push({
+        name: "Supabase sw_zeus_orphans",
+        ok: res.ok,
+        detail: res.ok
+          ? "接続成功"
+          : `${res.status} ${res.statusText} — ${(await res.text().catch(() => "")).slice(0, 200)}`,
+      });
+    } catch (err) {
+      checks.push({
+        name: "Supabase sw_zeus_orphans",
+        ok: false,
+        detail: `接続できません：${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+
+    // 画面側の削除処理は退避のときに title も書き込む。
+    // 列が無いと退避が失敗し、スワイプの削除そのものが中止になる。
+    try {
+      const res = await fetch(
+        `${base}/rest/v1/sw_zeus_orphans?select=title&limit=1`,
+        { headers: head }
+      );
+      const text = res.ok ? "" : await res.text().catch(() => "");
+      checks.push({
+        name: "退避の表の title 列",
+        ok: res.ok,
+        detail: res.ok
+          ? "あり"
+          : /column .* does not exist/i.test(text)
+            ? "無し。画面側の削除は退避の書き込みで失敗し、スワイプを消せない状態です"
+            : `${res.status} ${res.statusText} — ${text.slice(0, 200)}`,
+      });
+    } catch (err) {
+      checks.push({
+        name: "退避の表の title 列",
+        ok: false,
+        detail: `確認できません：${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  // Zeus の索引削除の口。掃除の道具が呼ぶ先。
+  // 認証の要らない生存確認だけを行い、削除は実行しない。
+  try {
+    const res = await fetch("https://zeus.shia2n.jp/api/external/delete-from-zeus", {
+      method: "GET",
+    });
+    const text = await res.text().catch(() => "");
+    checks.push({
+      name: "Zeus の索引削除の口",
+      ok: res.ok && text.includes("索引の削除"),
+      detail: res.ok && text.includes("索引の削除")
+        ? "つながっています"
+        : `見つかりません（応答コード ${res.status}）。Zeus 側の反映を確認してください`,
+    });
+  } catch (err) {
+    checks.push({
+      name: "Zeus の索引削除の口",
+      ok: false,
+      detail: `つながりません：${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
   const ng = checks.filter((c) => !c.ok).length;
   return Response.json(
     {
