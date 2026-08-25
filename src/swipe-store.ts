@@ -1,3 +1,11 @@
+/**
+ * swipe-mcp / src/swipe-store.ts / 第2版（2026-08-25 開発部）
+ *
+ * 第2版で直したこと
+ *   updateSwipe の中で保存の最低条件を検査するとき、title を渡していなかった。
+ *   そのため title が常に空と見なされ、swipe__update がどんな引数でも
+ *   「title_required: 見出しは必須です」で落ちていた（2026-08-25 に統括が検出）。
+ */
 import type { Env } from "./index.js";
 import { TABLE, selectRows, insertRow, updateRow, callRpc, currentUserId } from "./supabase-client.js";
 import { enrich, detectSourceType } from "./enrich.js";
@@ -295,8 +303,12 @@ export async function updateSwipe(env: Env, input: UpdateInput): Promise<Swipe> 
   const nextValue = (key: string, fallback: string | null): string =>
     key in patch ? ((patch[key] as string | null) ?? "") : (fallback ?? "");
 
+  // 2026-08-25 の直し：title を渡していなかったため、assertSavable の中で
+  // title が undefined になり、どんな引数で呼んでも title_required で落ちていた。
+  // 見出しは「今回の指定があればそれ、無ければ現在値」で判定する。
   assertSavable({
     reason:   nextValue("reason", current.reason),
+    title:    nextValue("title", current.title),
     url:      nextValue("source_url", current.source_url),
     body:     nextValue("body", current.body),
     file_url: current.file_url ?? "",
