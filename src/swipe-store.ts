@@ -10,7 +10,6 @@ import type { Env } from "./index.js";
 import { TABLE, selectRows, insertRow, updateRow, callRpc, currentUserId } from "./supabase-client.js";
 import { enrich, detectSourceType } from "./enrich.js";
 import { deriveTitle, deriveExcerpt } from "./titling.js";
-import { pushToZeus, type ZeusSyncResult } from "./zeus.js";
 
 export interface Swipe {
   id: string;
@@ -112,8 +111,6 @@ export interface AddResult {
   swipe: Swipe;
   /** AI 補完が実際に効いたか。false のときは見出し・タグが機械的な埋め合わせになる */
   ai_enriched: boolean;
-  /** Zeus 索引への登録結果（失敗しても登録自体は成功している） */
-  zeus: ZeusSyncResult;
 }
 
 export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
@@ -165,17 +162,8 @@ export async function addSwipe(env: Env, input: AddInput): Promise<AddResult> {
     zeus_synced:  false,
   };
 
-  const inserted = await insertRow<Swipe>(env, TABLE, row);
-  // Zeus 索引へ登録する。失敗しても登録は成立させる（§F5）
-  const zeus = await pushToZeus(env, inserted);
-
-  // 同期後の値を返す。挿入直後のスナップショットを返すと
-  // zeus_synced=false のまま見えて「連携失敗」と読み違えるため。
-  let swipe = inserted;
-  if (zeus.status === "pushed") {
-    swipe = await fetchWithoutCounting(env, inserted.id).catch(() => inserted);
-  }
-  return { swipe, ai_enriched: aiWorked, zeus };
+  const swipe = await insertRow<Swipe>(env, TABLE, row);
+  return { swipe, ai_enriched: aiWorked };
 }
 
 /* ── 検索（参照回数は増やさない・受け入れ基準8） ─────────────────────────── */
