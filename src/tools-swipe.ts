@@ -4,7 +4,6 @@ import type { Env } from "./index.js";
 import {
   addSwipe, searchSwipes, getSwipe, updateSwipe, markUsed, listTagCounts,
 } from "./swipe-store.js";
-import { cleanupZeusOrphans } from "./zeus-cleanup.js";
 
 /**
  * スワイプファイル MCP ツール群（要件定義 v1.7 §F4）。
@@ -43,11 +42,10 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
       visibility:   VISIBILITY.optional().describe("private（既定・自分用）/ sample（将来 生徒に見せる見本）"),
     },
     async (args) => {
-      const { swipe, ai_enriched, zeus } = await addSwipe(env, args);
+      const { swipe, ai_enriched } = await addSwipe(env, args);
       return asMcpTextResult({
         ok: true,
         ai_enriched,
-        zeus,
         note: ai_enriched ? undefined : "AI補完が効きませんでした（Anthropic の残高不足など）。title / topic_tags は機械的な埋め合わせです。残高が戻ったら swipe__update で整えてください",
         swipe,
       });
@@ -79,11 +77,11 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
         .describe("登録するスワイプの配列（最大50件）"),
     },
     async (args) => {
-      const results: Array<{ index: number; ok: boolean; id?: string; ai_enriched?: boolean; zeus_status?: string; error?: string }> = [];
+      const results: Array<{ index: number; ok: boolean; id?: string; ai_enriched?: boolean; error?: string }> = [];
       for (const [index, item] of args.items.entries()) {
         try {
-          const { swipe, ai_enriched, zeus } = await addSwipe(env, item);
-          results.push({ index, ok: true, id: swipe.id, ai_enriched, zeus_status: zeus.status });
+          const { swipe, ai_enriched } = await addSwipe(env, item);
+          results.push({ index, ok: true, id: swipe.id, ai_enriched });
         } catch (err) {
           results.push({ index, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
@@ -170,14 +168,4 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
     }
   );
 
-  /* ── 8. swipe__zeus_cleanup ────────────────────────────────────────── */
-  server.tool(
-    "swipe__zeus_cleanup",
-    "削除済みスワイプの Zeus 索引を掃除する。sw_zeus_orphans（掃除待ちの置き場）に溜まった索引IDを Zeus の削除の口へ渡し、索引を消してから置き場の行も片づける。すでに Zeus 側に無いIDも「片づいた」として扱う（索引が無い状態が目的のため）。失敗した分は置き場に残るので、もう一度呼べば続きから進む。何度呼んでも結果は同じ。まず dry_run=true で件数だけ見るのが安全。自動では走らないので、掃除したいときに呼ぶこと。戻り値: { ok, 対象, 索引を消した, もともと無かった, 置き場から外した, 残した, 下見のみ, 詳細 }",
-    {
-      limit:   z.number().int().min(1).max(200).optional().describe("1回で扱う件数（既定100・古いものから）"),
-      dry_run: z.boolean().optional().describe("true にすると件数を数えるだけで何も消さない"),
-    },
-    async (args) => asMcpTextResult(await cleanupZeusOrphans(env, args))
-  );
 }
