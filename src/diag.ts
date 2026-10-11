@@ -30,7 +30,7 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
       const res = await fetch(url, {
         headers: {
           apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+          ...(/^eyJ/.test(String(env.SUPABASE_SERVICE_ROLE_KEY || "")) ? { Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } : {}),
         },
       });
       if (res.ok) {
@@ -60,7 +60,7 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
     const base = env.SUPABASE_URL.replace(/\/+$/, "");
     const head = {
       apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(/^eyJ/.test(String(env.SUPABASE_SERVICE_ROLE_KEY || "")) ? { Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } : {}),
     };
 
     try {

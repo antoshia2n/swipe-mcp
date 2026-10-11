@@ -75,7 +75,7 @@ export async function pushToZeus(
       method:  "PATCH",
       headers: {
         apikey:         env.SUPABASE_SERVICE_ROLE_KEY,
-        Authorization:  `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        ...(/^eyJ/.test(String(env.SUPABASE_SERVICE_ROLE_KEY || "")) ? { Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } : {}),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ zeus_item_id: itemId, zeus_synced: true }),
