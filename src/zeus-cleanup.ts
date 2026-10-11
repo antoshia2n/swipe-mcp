@@ -57,7 +57,7 @@ async function removeOrphanRows(env: Env, rowIds: string[]): Promise<void> {
     method: "DELETE",
     headers: {
       apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(/^eyJ/.test(String(env.SUPABASE_SERVICE_ROLE_KEY || "")) ? { Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } : {}),
       "Content-Type": "application/json",
     },
   });

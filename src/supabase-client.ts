@@ -32,7 +32,7 @@ async function request<T>(
   const { url, key } = requireConfig(env);
   const headers: Record<string, string> = {
     apikey:         key,
-    Authorization:  `Bearer ${key}`,
+    ...(/^eyJ/.test(String(key || "")) ? { Authorization: `Bearer ${key}` } : {}),
     "Content-Type": "application/json",
   };
   if (init.prefer) headers.Prefer = init.prefer;
