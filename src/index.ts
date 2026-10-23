@@ -1,7 +1,7 @@
 /**
- * swipe-mcp エントリーポイント v1.0.0
+ * swipe-mcp エントリーポイント v1.1.0（2026-10-23 スワイプくん 1便目）
  *
- * スワイプファイルアプリ（お手本・見本データ）専用の MCP サーバー。
+ * スワイプくん（旧スワイプファイルアプリ）専用の MCP サーバー。
  * 要件定義 v1.7 §F4 に基づき、shia2n-mcp 本体とは完全に独立した Worker として動かす。
  *
  * ・shia2n-mcp 本体にツールを追加しない（本体は用途別分割を検討中のため）
@@ -23,15 +23,14 @@ export interface Env {
   // Supabase（スワイプ本体の保管先）
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  // AI 補完
-  ANTHROPIC_API_KEY: string;
-  // Zeus 索引連携（§F5）
-  ZEUS_EXTERNAL_SECRET: string;
+  // 見出し・抜粋の AI 補完（任意。無くても登録は通る）
+  ANTHROPIC_API_KEY?: string;
+  // リンク先の題名を取る口（スワイプくんの /api/ogp）
   SWIPE_APP_BASE: string;
 }
 
 function createSwipeMcpServer(env: Env): McpServer {
-  const server = new McpServer({ name: "swipe-mcp", version: "1.0.0" });
+  const server = new McpServer({ name: "swipe-mcp", version: "1.1.0" });
   registerSwipeTools(server, env);
   return server;
 }

@@ -2,170 +2,164 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./index.js";
 import {
-  addSwipe, searchSwipes, getSwipe, updateSwipe, markUsed, listTagCounts,
+  addSwipe, addContext, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, STAGES,
 } from "./swipe-store.js";
 
 /**
- * スワイプファイル MCP ツール群（要件定義 v1.7 §F4）。
+ * スワイプくん MCP ツール群（2026-10-23 スワイプくん 1便目で作り替え）。
+ *
+ * ラベルは 6 つ：種類（shu）・参考ポイント（refs）・評価（grade）・ジャンル（genres）・分析の段（stage）・その他のラベル（labels）。
+ * 値は決まった値の中からだけ受け付ける（swipe__list_tags で一覧できる。増やすのは Naoki が画面で行う）。
  *
  * 入力スキーマは必ず z.object でプロパティを明示する。
- * z.record() を最上位に置くと MCP SDK の JSON Schema 変換が壊れ、
- * tools/list 全体が失敗する（技術鉄則 §7.4）。
+ * z.record() を最上位に置くと MCP SDK の JSON Schema 変換が壊れ、tools/list 全体が失敗する（技術鉄則 §7.4）。
  */
 
 export function asMcpTextResult(payload: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
 }
 
-const CONTENT_AXIS = z.enum(["思考系", "習慣系", "攻略系", "その他"]);
-const SOURCE_TYPE  = z.enum(["X", "note", "YouTube", "ブログ", "ノート", "PDF", "その他"]);
-const STATUS       = z.enum(["未活用", "活用済", "reason未記入"]);
-const VISIBILITY   = z.enum(["private", "sample"]);
+const SOURCE_TYPE = z.enum(["X", "note", "YouTube", "ブログ", "ノート", "PDF", "その他"]);
+const GRADE = z.enum(["S", "A", "B", "C", "D"]);
+const STAGE = z.enum(STAGES);
+const VISIBILITY = z.enum(["private", "sample"]);
+
+const addShape = {
+  title: z.string().optional().describe("見出し。省略時はリンク先の題名か本文の書き出しから付ける"),
+  reason: z.string().optional().describe("分析 1 段目「言語化」：なぜ良いか。空でも保存できる（未分析のまま）"),
+  hypo: z.string().optional().describe("分析 2 段目「仮説」：ほかでも効きそうな型"),
+  idea: z.string().optional().describe("分析 3 段目「用途抽出」：どこで・どう使うかを文章で"),
+  url: z.string().optional().describe("出典 URL。body が無い場合は必須"),
+  body: z.string().optional().describe("中身そのもの（ポスト本文・書き起こし）。url が無い場合は必須"),
+  table: z.string().optional().describe("置き場の表 ID（swipe__list_tags の tables）。省略時は X→今月の表、note→記事、ほかは未整理"),
+  shu: z.string().optional().describe("種類（決まった値から：ポスト・記事・教材・販売ページ など）。省略時は媒体から決める"),
+  refs: z.array(z.string()).optional().describe("参考ポイント（決まった値から：構文・内容・セールスの流れ・実績の見せ方 など）"),
+  grade: GRADE.optional().describe("評価 S〜D"),
+  genres: z.array(z.string()).optional().describe("ジャンル（決まった値から）"),
+  labels: z.array(z.string()).optional().describe("その他のラベル（決まった値から）"),
+  ai_ask: z.boolean().optional().describe("true にすると「Claude に分析を頼んだ」の列に入る"),
+  author: z.string().optional().describe("発信者名"),
+  source_type: SOURCE_TYPE.optional().describe("媒体。省略時は URL から自動"),
+  excerpt: z.string().optional().describe("一覧に出す短い抜粋。省略時は自動"),
+  visibility: VISIBILITY.optional(),
+};
 
 export function registerSwipeTools(server: McpServer, env: Env): void {
-  /* ── 1. swipe__add ─────────────────────────────────────────────────── */
   server.tool(
     "swipe__add",
-    "スワイプ（お手本・見本データ）を1件登録する。title と reason は必須。url と body は少なくとも一方が必要（両方でも可）。topic_tags / content_axis / excerpt / source_type を省略すると AI が補完する。タグは既存タグに寄せて提案される。戻り値の ai_enriched が false のときは AI 補完が効いておらず、title などは機械的な埋め合わせになっている。戻り値: { ok, ai_enriched, swipe }",
-    {
-      title:        z.string().min(1).describe("見出し。必須。何の素材か一目で分かる短い言葉"),
-      reason:       z.string().min(1).describe("なぜ優れているか・要約の1行。必須。あとで素材を選ぶときの唯一の手がかりになる"),
-      url:          z.string().optional().describe("出典URL。body が無い場合は必須"),
-      body:         z.string().optional().describe("素材の中身そのもの（書き起こし・PDFから読んだ本文）。url が無い場合は必須"),
-      topic_tags:   z.array(z.string()).optional().describe("キーワードタグ（自由入力）。省略時は AI が既存タグに寄せて提案"),
-      source_type:  SOURCE_TYPE.optional().describe("媒体。省略時は URL・投入経路から自動判定"),
-      content_axis: CONTENT_AXIS.optional().describe("発信の軸。省略時は AI が判定"),
-      author:       z.string().optional().describe("発信者名"),
-      excerpt:      z.string().optional().describe("一覧に出す短い抜粋（全角200字程度）。省略時は AI が生成"),
-      visibility:   VISIBILITY.optional().describe("private（既定・自分用）/ sample（将来 生徒に見せる見本）"),
-    },
+    "スワイプくんに 1 件足す。url か body のどちらかが必要。ラベル（shu / refs / genres / labels）と置き場（table）は決まった値の中からだけ指定できる（先に swipe__list_tags で確かめる）。分析（reason / hypo / idea）は空でもよい。戻り値: { ok, ai_enriched, swipe }",
+    addShape,
     async (args) => {
       const { swipe, ai_enriched } = await addSwipe(env, args);
-      return asMcpTextResult({
-        ok: true,
-        ai_enriched,
-        note: ai_enriched ? undefined : "AI補完が効きませんでした（Anthropic の残高不足など）。title / topic_tags は機械的な埋め合わせです。残高が戻ったら swipe__update で整えてください",
-        swipe,
-      });
-    }
+      return asMcpTextResult({ ok: true, ai_enriched, swipe });
+    },
   );
 
-  /* ── 2. swipe__bulk_add ────────────────────────────────────────────── */
   server.tool(
     "swipe__bulk_add",
-    "スワイプを複数件まとめて登録する。各件が swipe__add と同じ条件（title と reason は必須・url か body のいずれか必要）を満たすこと。1件ずつ処理し、失敗した件だけ理由を返す。戻り値: { ok, added, failed, results }",
-    {
-      items: z
-        .array(
-          z.object({
-            title:        z.string().min(1).describe("見出し。必須"),
-            reason:       z.string().min(1).describe("なぜ優れているか・要約の1行。必須"),
-            url:          z.string().optional(),
-            body:         z.string().optional(),
-            topic_tags:   z.array(z.string()).optional(),
-            source_type:  SOURCE_TYPE.optional(),
-            content_axis: CONTENT_AXIS.optional(),
-            author:       z.string().optional(),
-            excerpt:      z.string().optional(),
-            visibility:   VISIBILITY.optional(),
-          })
-        )
-        .min(1)
-        .max(50)
-        .describe("登録するスワイプの配列（最大50件）"),
-    },
+    "スワイプを複数件まとめて足す（最大 50 件）。各件の条件は swipe__add と同じ。1 件ずつ処理し、失敗した件だけ理由を返す。戻り値: { ok, added, failed, results }",
+    { items: z.array(z.object(addShape)).min(1).max(50).describe("足すスワイプの配列") },
     async (args) => {
-      const results: Array<{ index: number; ok: boolean; id?: string; ai_enriched?: boolean; error?: string }> = [];
+      const ctx = await addContext(env);
+      const results: Array<{ index: number; ok: boolean; id?: string; place?: string; error?: string }> = [];
       for (const [index, item] of args.items.entries()) {
         try {
-          const { swipe, ai_enriched } = await addSwipe(env, item);
-          results.push({ index, ok: true, id: swipe.id, ai_enriched });
+          const { swipe } = await addSwipe(env, item, ctx);
+          results.push({ index, ok: true, id: swipe.id, place: swipe.place });
         } catch (err) {
           results.push({ index, ok: false, error: err instanceof Error ? err.message : String(err) });
         }
       }
-      return asMcpTextResult({
-        ok:     true,
-        added:  results.filter(r => r.ok).length,
-        failed: results.filter(r => !r.ok).length,
-        results,
-      });
-    }
+      return asMcpTextResult({ ok: true, added: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, results });
+    },
   );
 
-  /* ── 3. swipe__search（参照回数は増やさない） ──────────────────────── */
   server.tool(
     "swipe__search",
-    "スワイプを条件検索する。keyword は title / reason / body / excerpt / author の部分一致（検索は本文全体が対象）。ただし戻り値の body は先頭120字の抜粋で、全文は含まない。body_chars（本文の総文字数）と body_truncated（続きがあるか）で判断し、中身を読む必要があるものだけ swipe__get で全文を取ること。並び順は既定が登録日降順で、sort='ref' を明示したときだけ参照回数の多い順（同数は登録日降順）。このツールでは ref_count は増えない。戻り値: { ok, count, swipes }",
+    "スワイプを探す。種類・参考ポイント・評価・ジャンル・分析の段・ラベル・置き場・Claude への依頼の印で絞れる。keyword は見出し・本文・分析 3 段・抜粋・投稿者の部分一致。戻り値の body は先頭 120 字だけ（全文は swipe__get）。各件に place（置き場の名前）と stage（未分析・言語化・仮説・用途抽出）が付く。ref_count は増えない。戻り値: { ok, count, swipes }",
     {
-      keyword:      z.string().optional().describe("部分一致で探す語"),
-      tags:         z.array(z.string()).optional().describe("この全てのタグを含むものに絞る"),
-      source_type:  SOURCE_TYPE.optional(),
-      content_axis: CONTENT_AXIS.optional(),
-      status:       STATUS.optional(),
-      sort:         z.enum(["created", "ref"]).optional().describe("created=登録日降順（既定）/ ref=参照が多い順"),
-      limit:        z.number().int().min(1).max(100).optional().describe("最大件数（既定20）"),
+      keyword: z.string().optional().describe("部分一致で探す語"),
+      shu: z.string().optional().describe("種類"),
+      ref: z.string().optional().describe("参考ポイント（この値を含むもの）"),
+      grade_min: GRADE.optional().describe("この評価以上（A なら S と A）"),
+      genre: z.string().optional().describe("ジャンル（この値を含むもの）"),
+      label: z.string().optional().describe("その他のラベル（この値を含むもの）"),
+      stage: STAGE.optional().describe("分析の段（未分析＝3 段とも空）"),
+      ai_ask: z.boolean().optional().describe("true で「Claude に分析を頼んだ」ものだけ"),
+      table: z.string().optional().describe("置き場の表 ID。unsorted で未整理だけ"),
+      source_type: SOURCE_TYPE.optional(),
+      sort: z.enum(["created", "ref"]).optional().describe("created=保存日の新しい順（既定）/ ref=参照が多い順"),
+      limit: z.number().int().min(1).max(100).optional().describe("最大件数（既定 20）"),
     },
     async (args) => {
       const swipes = await searchSwipes(env, args);
       return asMcpTextResult({ ok: true, count: swipes.length, swipes });
-    }
+    },
   );
 
-  /* ── 4. swipe__get（呼ぶたびに +1） ────────────────────────────────── */
   server.tool(
     "swipe__get",
-    "ID指定でスワイプを1件フル取得する（body を含む）。呼び出すたびに ref_count が +1 され last_referenced_at が更新される。素材を実際に読むときだけ使うこと（一覧を眺めるだけなら swipe__search）。戻り値: { ok, swipe }",
-    {
-      id: z.string().min(1).describe("スワイプのID（swipe__search の戻り値に含まれる）"),
-    },
-    async (args) => asMcpTextResult({ ok: true, swipe: await getSwipe(env, args.id) })
+    "ID 指定でスワイプを 1 件まるごと取る（本文の全文・本文に引いた線・使った記録・種類ごとの欄を含む）。呼ぶたびに ref_count が +1。素材を実際に読むときだけ使う。戻り値: { ok, swipe }",
+    { id: z.string().min(1).describe("スワイプの ID（swipe__search の戻り値）") },
+    async (args) => asMcpTextResult({ ok: true, swipe: await getSwipe(env, args.id) }),
   );
 
-  /* ── 5. swipe__update（参照回数は更新対象外） ──────────────────────── */
   server.tool(
     "swipe__update",
-    "スワイプを部分更新する。指定した項目だけ変更され、省略した項目は現在値を維持する。ref_count / last_referenced_at は更新できない。reason を空にする更新、および url / body / file_url がすべて空になる更新は拒否される。戻り値: { ok, swipe }",
+    "スワイプを部分更新する。指定した項目だけ変わる。ラベルと置き場は決まった値の中からだけ。分析 3 段を上書きできるので、Claude が下書きを入れるときは swipe__fill_analysis を使う。url / body / file_url がすべて空になる更新は断る。戻り値: { ok, swipe }",
     {
-      id:           z.string().min(1).describe("スワイプのID"),
-      reason:       z.string().optional(),
-      url:          z.string().optional(),
-      body:         z.string().optional(),
-      title:        z.string().optional(),
-      topic_tags:   z.array(z.string()).optional(),
-      source_type:  SOURCE_TYPE.optional(),
-      content_axis: CONTENT_AXIS.optional(),
-      author:       z.string().optional(),
-      excerpt:      z.string().optional(),
-      status:       STATUS.optional(),
-      used_in:      z.string().optional().describe("活用先の ContentOS 投稿ID・URL"),
-      visibility:   VISIBILITY.optional(),
+      id: z.string().min(1).describe("スワイプの ID"),
+      title: z.string().optional(),
+      reason: z.string().optional().describe("言語化"),
+      hypo: z.string().optional().describe("仮説"),
+      idea: z.string().optional().describe("用途抽出"),
+      url: z.string().optional(),
+      body: z.string().optional(),
+      table: z.string().optional().describe("置き場の表 ID。空文字で未整理へ"),
+      shu: z.string().optional(),
+      refs: z.array(z.string()).optional(),
+      grade: z.enum(["S", "A", "B", "C", "D", ""]).optional().describe("空文字で評価なし"),
+      genres: z.array(z.string()).optional(),
+      labels: z.array(z.string()).optional(),
+      ai_ask: z.boolean().optional(),
+      author: z.string().optional(),
+      excerpt: z.string().optional(),
+      visibility: VISIBILITY.optional(),
     },
-    async (args) => asMcpTextResult({ ok: true, swipe: await updateSwipe(env, args) })
+    async (args) => asMcpTextResult({ ok: true, swipe: await updateSwipe(env, args) }),
   );
 
-  /* ── 6. swipe__mark_used（参照回数は増やさない） ───────────────────── */
+  server.tool(
+    "swipe__fill_analysis",
+    "Claude が分析の下書きを入れる。空いている段（言語化・仮説・用途抽出）だけに書き、すでに書いてある段は書き換えない。参考ポイントとジャンルも、空のときだけ候補を入れる（決まった値の中から）。書いたら「Claude に分析を頼んだ」の印を外す。頼まれたものは swipe__search の ai_ask=true で探す。戻り値: { ok, filled, kept, swipe }",
+    {
+      id: z.string().min(1).describe("スワイプの ID"),
+      why: z.string().optional().describe("言語化：なぜ良いか"),
+      hypo: z.string().optional().describe("仮説：ほかでも効きそうな型"),
+      idea: z.string().optional().describe("用途抽出：どこで・どう使うかを文章で"),
+      refs: z.array(z.string()).optional().describe("参考ポイントの候補"),
+      genres: z.array(z.string()).optional().describe("ジャンルの候補"),
+    },
+    async (args) => {
+      const r = await fillAnalysis(env, args);
+      return asMcpTextResult({ ok: true, filled: r.filled, kept: r.kept, swipe: r.swipe });
+    },
+  );
+
   server.tool(
     "swipe__mark_used",
-    "スワイプを「活用済」にし、活用先を記録する。ref_count は増えない。戻り値: { ok, swipe }",
+    "スワイプを「使った」にし、どこで使ったかを使った記録に足す（日付は今日・日本時間）。ref_count は増えない。戻り値: { ok, swipe }",
     {
-      id:      z.string().min(1).describe("スワイプのID"),
-      used_in: z.string().optional().describe("活用先の ContentOS 投稿ID・URL（複数はカンマ区切り）"),
+      id: z.string().min(1).describe("スワイプの ID"),
+      used_in: z.string().optional().describe("使った先（記事名・セミナー名・URL など）"),
     },
-    async (args) => asMcpTextResult({ ok: true, swipe: await markUsed(env, args.id, args.used_in) })
+    async (args) => asMcpTextResult({ ok: true, swipe: await markUsed(env, args.id, args.used_in) }),
   );
 
-  /* ── 7. swipe__list_tags ───────────────────────────────────────────── */
   server.tool(
     "swipe__list_tags",
-    "使用中のタグを件数つきで一覧する。topic_tags は自由入力のため、同義語の乱立（表記ゆれ）を確認して寄せるために使う。新しくタグを付ける前にこれを見ること。戻り値: { ok, count, tags }",
+    "選べる値と置き場を件数つきで一覧する。種類・参考ポイント・ジャンル・ラベルの決まった値、評価、分析の段、置き場の表（id と名前）。足す・直す・探す前にこれを見て、ここにある値だけを使う。戻り値: { ok, labels, stages, grades, tables, old_topic_tags }",
     {},
-    async () => {
-      const tags = await listTagCounts(env);
-      return asMcpTextResult({ ok: true, count: tags.length, tags });
-    }
+    async () => asMcpTextResult({ ok: true, ...(await listVocabulary(env)) }),
   );
-
 }

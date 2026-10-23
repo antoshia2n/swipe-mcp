@@ -12,8 +12,6 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
     ["MCP_DEFAULT_USER_ID", env.MCP_DEFAULT_USER_ID],
     ["SUPABASE_URL", env.SUPABASE_URL],
     ["SUPABASE_SERVICE_ROLE_KEY", env.SUPABASE_SERVICE_ROLE_KEY],
-    ["ANTHROPIC_API_KEY", env.ANTHROPIC_API_KEY],
-    ["ZEUS_EXTERNAL_SECRET", env.ZEUS_EXTERNAL_SECRET],
   ];
   for (const [name, value] of required) {
     checks.push({
@@ -25,7 +23,7 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
 
   // Supabase 接続とテーブルの列（v1.7 の列まで指定して取りこぼしも検出する）
   if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-    const url = `${env.SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/sw_swipes?select=id,body,file_url,visibility,ref_count&limit=1`;
+    const url = `${env.SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/sw_swipes?select=id,body,file_url,ref_count,table_id,shu,refs,grade,genres,labels,an_hypo,an_idea,highlights,used_log,props,ai_ask&limit=1`;
     try {
       const res = await fetch(url, {
         headers: {
@@ -41,7 +39,7 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
           name: "Supabase sw_swipes",
           ok: false,
           detail: /column .* does not exist/i.test(text)
-            ? "テーブルはありますが列が古い版です。03_v17_columns.sql を実行してください"
+            ? "表はありますが列が古い版です。作業 25（スワイプくんの列を足す SQL）が済んでいません"
             : `${res.status} ${res.statusText} — ${text.slice(0, 200)}`,
         });
       }
@@ -54,88 +52,31 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
     }
   }
 
-  // 掃除待ちの置き場（sw_zeus_orphans）。掃除の道具が読む先なので、
-  // 接続と、画面側が書き込もうとしている列の有無を分けて出す。
+  // 設定の表（フォルダ・表・選べる値）。無くても既定の値で動くが、画面が書く先なので有無を出す
   if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
     const base = env.SUPABASE_URL.replace(/\/+$/, "");
-    const head = {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      ...(/^eyJ/.test(String(env.SUPABASE_SERVICE_ROLE_KEY || "")) ? { Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } : {}),
-    };
-
     try {
-      const res = await fetch(
-        `${base}/rest/v1/sw_zeus_orphans?select=id,zeus_item_id,source_url&limit=1`,
-        { headers: head }
-      );
-      checks.push({
-        name: "Supabase sw_zeus_orphans",
-        ok: res.ok,
-        detail: res.ok
-          ? "接続成功"
-          : `${res.status} ${res.statusText} — ${(await res.text().catch(() => "")).slice(0, 200)}`,
+      const res = await fetch(`${base}/rest/v1/sw_settings?select=user_id,data&limit=1`, {
+        headers: {
+          apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+          ...(/^eyJ/.test(String(env.SUPABASE_SERVICE_ROLE_KEY || "")) ? { Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } : {}),
+        },
       });
-    } catch (err) {
-      checks.push({
-        name: "Supabase sw_zeus_orphans",
-        ok: false,
-        detail: `接続できません：${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
-
-    // 画面側の削除処理は退避のときに title も書き込む。
-    // 列が無いと退避が失敗し、スワイプの削除そのものが中止になる。
-    try {
-      const res = await fetch(
-        `${base}/rest/v1/sw_zeus_orphans?select=title&limit=1`,
-        { headers: head }
-      );
       const text = res.ok ? "" : await res.text().catch(() => "");
-      checks.push({
-        name: "退避の表の title 列",
-        ok: res.ok,
-        detail: res.ok
-          ? "あり"
-          : /column .* does not exist/i.test(text)
-            ? "無し。画面側の削除は退避の書き込みで失敗し、スワイプを消せない状態です"
-            : `${res.status} ${res.statusText} — ${text.slice(0, 200)}`,
-      });
+      checks.push({ name: "Supabase sw_settings", ok: res.ok, detail: res.ok ? "接続成功" : `${res.status} — ${text.slice(0, 200)}` });
     } catch (err) {
-      checks.push({
-        name: "退避の表の title 列",
-        ok: false,
-        detail: `確認できません：${err instanceof Error ? err.message : String(err)}`,
-      });
+      checks.push({ name: "Supabase sw_settings", ok: false, detail: `接続できません：${err instanceof Error ? err.message : String(err)}` });
     }
   }
 
-  // Zeus の索引削除の口。掃除の道具が呼ぶ先。
-  // 認証の要らない生存確認だけを行い、削除は実行しない。
-  try {
-    const res = await fetch("https://zeus.shia2n.jp/api/external/delete-from-zeus", {
-      method: "GET",
-    });
-    const text = await res.text().catch(() => "");
-    checks.push({
-      name: "Zeus の索引削除の口",
-      ok: res.ok && text.includes("索引の削除"),
-      detail: res.ok && text.includes("索引の削除")
-        ? "つながっています"
-        : `見つかりません（応答コード ${res.status}）。Zeus 側の反映を確認してください`,
-    });
-  } catch (err) {
-    checks.push({
-      name: "Zeus の索引削除の口",
-      ok: false,
-      detail: `つながりません：${err instanceof Error ? err.message : String(err)}`,
-    });
-  }
+  // AI 補完の鍵は任意（無ければ見出しは題名・本文から付ける）
+  checks.push({ name: "AI 補完（任意）", ok: true, detail: env.ANTHROPIC_API_KEY ? "鍵あり" : "鍵なし。見出しは題名・本文から付ける" });
 
   const ng = checks.filter((c) => !c.ok).length;
   return Response.json(
     {
       app: "swipe-mcp",
-      version: "1.0.0",
+      version: "1.1.0",
       checked_at: new Date().toISOString(),
       summary: { total: checks.length, ok: checks.length - ng, ng },
       checks,
