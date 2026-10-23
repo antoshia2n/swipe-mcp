@@ -1,5 +1,4 @@
 import type { Env } from "./index.js";
-import { listTagCounts } from "./swipe-store.js";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL             = "claude-haiku-4-5-20251001";
@@ -42,12 +41,8 @@ export async function enrich(
 ): Promise<EnrichResult> {
   if (!env.ANTHROPIC_API_KEY) return {};
 
-  let existingTags: string[] = [];
-  try {
-    existingTags = (await listTagCounts(env)).slice(0, 60).map(t => t.tag);
-  } catch {
-    // 取得できなくても補完は続ける
-  }
+  // 2026-10-23：タグは決まった値から選ぶ形に変えたため、ここで自由なタグは作らない（見出し・抜粋・投稿者・媒体だけ使う）
+  const existingTags: string[] = [];
 
   const tagGuide = existingTags.length
     ? `## すでに使われているタグ（意味の近いものがあれば、新しい言い方を作らずこの表記をそのまま使う）\n${existingTags.join(" / ")}`

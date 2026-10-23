@@ -7,7 +7,7 @@ import type { Env } from "./index.js";
  */
 
 export const TABLE   = "sw_swipes";
-export const ORPHANS = "sw_zeus_orphans";
+export const SETTINGS_TABLE = "sw_settings";
 
 function requireConfig(env: Env): { url: string; key: string; userId: string } {
   if (!env.SUPABASE_URL)              throw new Error("SUPABASE_URL is not configured");
