@@ -30,7 +30,7 @@ export interface Env {
 }
 
 function createSwipeMcpServer(env: Env): McpServer {
-  const server = new McpServer({ name: "swipe-mcp", version: "1.1.0" });
+  const server = new McpServer({ name: "swipe-mcp", version: "1.2.0" });
   registerSwipeTools(server, env);
   return server;
 }

@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./index.js";
 import {
-  addSwipe, addContext, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, STAGES,
+  addSwipe, addContext, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, listPacks, getPack, STAGES,
 } from "./swipe-store.js";
 
 /**
@@ -154,6 +154,20 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
       used_in: z.string().optional().describe("使った先（記事名・セミナー名・URL など）"),
     },
     async (args) => asMcpTextResult({ ok: true, swipe: await markUsed(env, args.id, args.used_in) }),
+  );
+
+  server.tool(
+    "swipe__list_packs",
+    "素材パック（Naoki が画面で、選んだスワイプと「作るもの」「目的」を 1 枚にまとめたもの）を一覧する。keyword で名前・目的を部分一致で絞れる。戻り値: { ok, count, packs: [{ id, name, make, goal, place, items, updated_at }] }",
+    { keyword: z.string().optional().describe("名前・目的・作るものの部分一致") },
+    async (args) => { const packs = await listPacks(env, args.keyword); return asMcpTextResult({ ok: true, count: packs.length, packs }); },
+  );
+
+  server.tool(
+    "swipe__get_pack",
+    "素材パックを 1 つ読む（名前か ID）。「素材パック『○○』で書いて」と言われたらこれを呼ぶ。見本のスワイプは全文・分析・線つきで返し、handoff はそのまま執筆の指示に使える渡す文。見本の文をそのまま写さず、参考ポイントの部分だけを借りる。ref_count は増えない。戻り値: { ok, pack, handoff, items }",
+    { name: z.string().min(1).describe("素材パックの名前（完全一致を優先、無ければ部分一致）か ID") },
+    async (args) => asMcpTextResult({ ok: true, ...(await getPack(env, args.name)) }),
   );
 
   server.tool(

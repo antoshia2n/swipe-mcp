@@ -563,3 +563,74 @@ export async function listVocabulary(env: Env) {
     old_topic_tags: count([], rows.flatMap(r => r.topic_tags ?? [])),
   };
 }
+
+/* ── 素材パック（スワイプくん 3便目・表 sw_packs） ───────────────────────────
+ * 画面で「選んだスワイプ＋作るもの＋目的」を 1 枚にしたもの。AI は名前か ID で読み、見本の全文と渡す文を受け取る。
+ * 渡す文の並びは画面（src/engine/coll.js の packText）と同じ。
+ */
+export const PACKS_TABLE = "sw_packs";
+
+interface PackRow { id: string; user_id: string; table_id: string | null; name: string; make: string; goal: string; items: string[]; updated_at: string }
+interface CollConf { folders: Array<{ id: string; name: string; parent: string | null }>; tables: Array<{ id: string; name: string; folder: string }> }
+
+async function packConf(env: Env): Promise<CollConf> {
+  const uid = currentUserId(env);
+  const rows = await selectRows<{ data: { coll?: { pack?: CollConf } } }>(env, `${SETTINGS_TABLE}?user_id=eq.${encodeURIComponent(uid)}&select=data`);
+  const c = rows[0]?.data?.coll?.pack;
+  return c && Array.isArray(c.tables) ? c : {
+    folders: [{ id: "pf-x", name: "X", parent: null }, { id: "pf-edu", name: "教材・セミナー", parent: null }],
+    tables: [{ id: "pt-article", name: "X記事", folder: "pf-x" }, { id: "pt-post", name: "ポスト", folder: "pf-x" }, { id: "pt-seminar", name: "セミナー資料", folder: "pf-edu" }],
+  };
+}
+function packPlace(c: CollConf, tid: string | null): string {
+  const t = c.tables.find(x => x.id === tid);
+  if (!t) return "未整理";
+  const f = c.folders.find(x => x.id === t.folder);
+  return f ? `${f.name} / ${t.name}` : t.name;
+}
+
+export async function listPacks(env: Env, keyword?: string) {
+  const uid = currentUserId(env);
+  const kw = safeKeyword(keyword ?? "");
+  const q = [`user_id=eq.${encodeURIComponent(uid)}`, "select=id,table_id,name,make,goal,items,updated_at", "order=updated_at.desc", "limit=200"];
+  if (kw) q.push(`or=${encodeURIComponent(`(name.ilike.*${kw}*,goal.ilike.*${kw}*,make.ilike.*${kw}*)`)}`);
+  const [rows, c] = await Promise.all([selectRows<PackRow>(env, `${PACKS_TABLE}?${q.join("&")}`), packConf(env)]);
+  return rows.map(r => ({ id: r.id, name: r.name, make: r.make, goal: r.goal, place: packPlace(c, r.table_id), items: (r.items ?? []).length, updated_at: r.updated_at }));
+}
+
+export async function getPack(env: Env, idOrName: string) {
+  const uid = currentUserId(env);
+  const key = idOrName.trim();
+  const isId = /^[0-9a-f-]{36}$/i.test(key);
+  const base = `${PACKS_TABLE}?user_id=eq.${encodeURIComponent(uid)}&select=*`;
+  let rows = await selectRows<PackRow>(env, `${base}&${isId ? `id=eq.${key}` : `name=eq.${encodeURIComponent(key)}`}`);
+  if (!rows.length && !isId) rows = await selectRows<PackRow>(env, `${base}&name=ilike.${encodeURIComponent(`*${safeKeyword(key)}*`)}&order=updated_at.desc&limit=2`);
+  if (!rows.length) throw new Error(`not_found: 素材パック「${key}」が見つかりません。swipe__list_packs で名前を確かめてください`);
+  if (rows.length > 1 && !isId) throw new Error(`ambiguous: 「${key}」に当てはまる素材パックが複数あります（${rows.map(r => r.name).join("・")}）。名前をそのまま指定してください`);
+  const pk = rows[0];
+  const ids = (pk.items ?? []).filter(id => /^[0-9a-f-]{36}$/i.test(id));
+  const [swipes, cfg, c] = await Promise.all([
+    ids.length ? selectRows<Swipe>(env, `${TABLE}?user_id=eq.${encodeURIComponent(uid)}&id=in.(${ids.join(",")})&select=*`) : Promise.resolve([] as Swipe[]),
+    loadSettings(env), packConf(env),
+  ]);
+  const byId = new Map(swipes.map(s => [s.id, s]));
+  const items = ids.map(id => byId.get(id)).filter((s): s is Swipe => !!s).map(s => toOut(cfg, s, true));
+  const line = (o: SwipeOut, i: number) => [
+    `\n■ 見本 ${i + 1}：${o.title}`,
+    `種類：${o.shu || "なし"}／参考ポイント：${o.refs.join("・") || "なし"}／評価：${o.grade || "なし"}／ジャンル：${o.genres.join("・") || "なし"}`,
+    o.url && `元のページ：${o.url}`, o.image_url && /^https?:/.test(o.image_url) && `画像：${o.image_url}`, o.file_url && `ファイル：${o.file_url}`,
+    (o.body || o.excerpt) && `本文：${String(o.body || o.excerpt).replace(/\n+/g, " ")}`,
+    ...(o.highlights as unknown as Array<{ t?: string; r: string; box?: number[]; p?: number }>).map(h => h.t ? `線（${h.r}）：${h.t}` : `画像の印（${h.r}）${h.p ? `：${h.p} ページ目` : ""}`),
+    o.analysis.why && `言語化：${o.analysis.why}`, o.analysis.hypo && `仮説：${o.analysis.hypo}`, o.analysis.idea && `用途抽出：${o.analysis.idea}`,
+  ].filter(Boolean).join("\n");
+  const handoff = [
+    `【素材パック】${pk.name}`, `作るもの：${pk.make || "未設定"}`, `目的：${pk.goal || "未設定"}`, ``,
+    `以下の ${items.length} 件を見本にする。見本の文をそのまま写さず、参考ポイントに書いた部分だけを借りること。`,
+    ...items.map(line),
+  ].join("\n");
+  return {
+    pack: { id: pk.id, name: pk.name, make: pk.make, goal: pk.goal, place: packPlace(c, pk.table_id), updated_at: pk.updated_at, missing_items: ids.length - items.length },
+    handoff,
+    items,
+  };
+}
