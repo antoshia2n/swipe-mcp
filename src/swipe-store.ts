@@ -261,6 +261,19 @@ async function fetchPageMeta(env: Env, url: string): Promise<{ title: string; de
   }
 }
 
+/** X のリンク先の情報から、投稿者・アカウント・ポストの本文を取り出す（画面の fromXCard と同じ規則） */
+export function fromXCard(page: { title: string; description: string }, url = ""): { author: string; handle: string; text: string } {
+  const out = { author: "", handle: "", text: "" };
+  const m = /(?:x|twitter)\.com\/([A-Za-z0-9_]+)\/status/i.exec(url);
+  if (m) out.handle = "@" + m[1];
+  const title = String(page.title || "").trim();
+  let r: RegExpExecArray | null;
+  if ((r = /^(.*?)\s*\(@([A-Za-z0-9_]+)\)\s+on (X|Twitter)$/.exec(title))) out.author = r[1];
+  else if ((r = /^(.*?) on (X|Twitter): [“"]([\s\S]*)[”"]\s*\/\s*(X|Twitter)$/.exec(title))) { out.author = r[1]; out.text = r[3]; }
+  if (!out.text) out.text = String(page.description || "").trim();
+  return out;
+}
+
 function jstMonthTable(d = new Date()): string {
   const f = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(d);
   return `x-${f.slice(0, 7)}`;
@@ -291,10 +304,14 @@ export async function addSwipe(env: Env, input: AddInput, ctx?: { cfg: Settings;
   const needsEnrich = !input.title || !input.excerpt || !input.source_type;
   const ai = needsEnrich ? await enrich(env, { url, body, reason: input.reason ?? "" }) : {};
   const aiWorked = Object.values(ai).some(v => v !== undefined);
-  const page = url ? await fetchPageMeta(env, url) : { title: "", description: "" };
-  const titled = deriveTitle({ manualTitle: input.title ?? "", pageTitle: page.title, aiTitle: ai.title, body });
-  const excerpt = deriveExcerpt({ manualExcerpt: input.excerpt, aiExcerpt: ai.excerpt, pageDescription: page.description, body });
+  let page = url ? await fetchPageMeta(env, url) : { title: "", description: "" };
   const src = input.source_type ?? ai.source_type ?? detectSourceType(url, body.length > 0);
+  // X の題名は「名前 (@id) on X」でポストの中身ではない。本文は説明文の側にある（画面の src/engine/data.js と同じ規則）
+  const x = src === "X" ? fromXCard(page, url) : null;
+  if (x) page = { title: "", description: "" };
+  const text = body || x?.text || "";
+  const titled = deriveTitle({ manualTitle: input.title ?? "", pageTitle: page.title, aiTitle: ai.title, body: text });
+  const excerpt = deriveExcerpt({ manualExcerpt: input.excerpt, aiExcerpt: ai.excerpt, pageDescription: page.description, body: text });
 
   // 置き場の自動：X は今月の表、note は記事、ほかは未整理（画面の「足す」と同じ規則）
   let table = input.table || null;
@@ -306,13 +323,13 @@ export async function addSwipe(env: Env, input: AddInput, ctx?: { cfg: Settings;
   const row = {
     user_id: currentUserId(env),
     source_url: url || null,
-    body: body || null,
+    body: text || null,
     reason: (input.reason ?? "").trim(),
     title: titled.title,
     title_auto: titled.auto,
     topic_tags: input.topic_tags ?? [],
     source_type: src,
-    author: input.author ?? ai.author ?? null,
+    author: input.author ?? (x?.author || null) ?? ai.author ?? null,
     excerpt: excerpt || null,
     content_axis: input.content_axis ?? null,
     visibility: input.visibility ?? "private",
@@ -326,6 +343,7 @@ export async function addSwipe(env: Env, input: AddInput, ctx?: { cfg: Settings;
     an_hypo: (input.hypo ?? "").trim(),
     an_idea: (input.idea ?? "").trim(),
     ai_ask: input.ai_ask ?? false,
+    props: x?.handle ? { handle: x.handle } : {},
   };
   const swipe = await insertRow<Swipe>(env, TABLE, row);
   return { swipe: toOut(cfg, swipe, true), ai_enriched: aiWorked };
