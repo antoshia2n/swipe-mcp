@@ -119,6 +119,7 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 const X_MONTH = /^x-(\d{4})-(\d{2})$/;
+const YT_MONTH = /^yt-(\d{4})-(\d{2})$/; // YouTube の月の表（2026-10-30・画面の yt-2026-10 と同じ形）
 
 export async function loadSettings(env: Env): Promise<Settings> {
   const uid = currentUserId(env);
@@ -138,7 +139,9 @@ function placeOf(cfg: Settings, tid: string | null): string {
   const t = cfg.tables.find(x => x.id === tid);
   if (!t) {
     const m = X_MONTH.exec(tid);
-    return m ? `Xポスト / ${m[1]}年 / ${+m[2]}月` : "未整理";
+    if (m) return `Xポスト / ${m[1]}年 / ${+m[2]}月`;
+    const y = YT_MONTH.exec(tid);
+    return y ? `YouTube / ${y[1]}年 / ${+y[2]}月` : "未整理";
   }
   const path: string[] = [];
   let f = cfg.folders.find(x => x.id === t.folder);
@@ -214,8 +217,8 @@ function check(kind: string, values: string[] | undefined, allowed: Set<string>)
 
 function checkTable(tid: string | undefined | null, allowed: Allowed): void {
   if (tid === undefined || tid === null || tid === "") return;
-  if (allowed.tables.has(tid) || X_MONTH.test(tid)) return;
-  throw new Error(`table_not_found: 置き場 ${tid} はありません。swipe__list_tags の tables から選ぶ（X のポストは x-YYYY-MM でもよい）`);
+  if (allowed.tables.has(tid) || X_MONTH.test(tid) || YT_MONTH.test(tid)) return;
+  throw new Error(`table_not_found: 置き場 ${tid} はありません。swipe__list_tags の tables から選ぶ（X のポストは x-YYYY-MM、YouTube は yt-YYYY-MM でもよい）`);
 }
 
 const GRADE_FROM: Record<string, number> = { S: 5, A: 4, B: 3, C: 2, D: 1, "": 0 };
@@ -274,9 +277,9 @@ export function fromXCard(page: { title: string; description: string }, url = ""
   return out;
 }
 
-function jstMonthTable(d = new Date()): string {
+function jstMonthTable(d = new Date(), prefix: "x" | "yt" = "x"): string {
   const f = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(d);
-  return `x-${f.slice(0, 7)}`;
+  return `${prefix}-${f.slice(0, 7)}`;
 }
 
 function shuFromSource(src: string): string | null {
@@ -313,10 +316,11 @@ export async function addSwipe(env: Env, input: AddInput, ctx?: { cfg: Settings;
   const titled = deriveTitle({ manualTitle: input.title ?? "", pageTitle: page.title, aiTitle: ai.title, body: text });
   const excerpt = deriveExcerpt({ manualExcerpt: input.excerpt, aiExcerpt: ai.excerpt, pageDescription: page.description, body: text });
 
-  // 置き場の自動：X は今月の表、note は記事、ほかは未整理（画面の「足す」と同じ規則）
+  // 置き場の自動：X と YouTube は今月の表、note は記事、ほかは未整理（画面の「足す」と同じ規則）。月の表は画面を開いたときに設定へ足される
   let table = input.table || null;
   if (!table) {
     if (src === "X") table = jstMonthTable();
+    else if (src === "YouTube") table = jstMonthTable(undefined, "yt");
     else if (src === "note" && allowed.tables.has("t-note")) table = "t-note";
   }
 

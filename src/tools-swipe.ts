@@ -31,7 +31,7 @@ const addShape = {
   idea: z.string().optional().describe("分析 3 段目「用途抽出」：どこで・どう使うかを文章で"),
   url: z.string().optional().describe("出典 URL。body が無い場合は必須"),
   body: z.string().optional().describe("中身そのもの（ポスト本文・書き起こし）。url が無い場合は必須"),
-  table: z.string().optional().describe("置き場の表 ID（swipe__list_tags の tables）。省略時は X→今月の表、note→記事、ほかは未整理"),
+  table: z.string().optional().describe("置き場の表 ID（swipe__list_tags の tables）。省略時は X と YouTube→今月の表、note→記事、ほかは未整理"),
   shu: z.string().optional().describe("種類（決まった値から：ポスト・記事・教材・販売ページ など）。省略時は媒体から決める"),
   refs: z.array(z.string()).optional().describe("参考ポイント（決まった値から：構文・内容・セールスの流れ・実績の見せ方 など）"),
   grade: GRADE.optional().describe("評価 S〜D"),
