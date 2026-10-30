@@ -202,7 +202,8 @@ async function allowedValues(env: Env, cfg: Settings): Promise<Allowed> {
     shu: s(cfg.labels.shu, rows.map(r => r.shu)),
     ref: s(cfg.labels.ref, rows.flatMap(r => r.refs ?? [])),
     genre: s(cfg.labels.genre, rows.flatMap(r => r.genres ?? [])),
-    tag: s(cfg.labels.tag, rows.flatMap(r => r.labels ?? [])),
+    // 2026-10-30：参考ポイントはラベルに統一。前の参考ポイントの値もラベルとして選べる
+    tag: s([...(cfg.labels.tag ?? []), ...(cfg.labels.ref ?? [])], [...rows.flatMap(r => r.labels ?? []), ...rows.flatMap(r => r.refs ?? [])]),
     tables: new Set(cfg.tables.map(t => t.id)),
   };
 }
@@ -391,7 +392,8 @@ export async function searchSwipes(env: Env, input: SearchInput): Promise<SwipeO
     params.push(`or=${encodeURIComponent(`(title.ilike.${like},reason.ilike.${like},an_hypo.ilike.${like},an_idea.ilike.${like},body.ilike.${like},excerpt.ilike.${like},author.ilike.${like})`)}`);
   }
   if (input.shu) params.push(`shu=eq.${encodeURIComponent(input.shu)}`);
-  if (input.ref) params.push(`refs=cs.${arr(input.ref)}`);
+  // 2026-10-30：参考ポイントはラベルに統一。ref を指定されたらラベルと古い refs の両方を見る
+  if (input.ref) params.push(`or=${encodeURIComponent(`(labels.cs.${decodeURIComponent(arr(input.ref))},refs.cs.${decodeURIComponent(arr(input.ref))})`)}`);
   if (input.genre) params.push(`genres=cs.${arr(input.genre)}`);
   if (input.label) params.push(`labels=cs.${arr(input.label)}`);
   if (input.grade_min) params.push(`grade=gte.${GRADE_FROM[input.grade_min]}`);
@@ -408,6 +410,41 @@ export async function searchSwipes(env: Env, input: SearchInput): Promise<SwipeO
   const [rows, cfg] = await Promise.all([selectRows<Swipe>(env, `${TABLE}?${params.join("&")}`), loadSettings(env)]);
   const picked = input.stage ? rows.filter(r => stageOf(r) === input.stage).slice(0, limit) : rows;
   return picked.map(r => toOut(cfg, r, false));
+}
+
+/* ── Naoki の分析をラベルでたどる（2026-10-30・読むだけ） ─────────────
+ * 分析やリサーチは Naoki が行う。AI はそれを読んで再現・効率化する道具。
+ * なのでこの関数は書かない・ref_count も増やさない。
+ * 参考ポイント（refs）はラベルに統一したので、refs に残る古い値もラベルとして拾う。 */
+
+export interface TraceItem {
+  id: string; title: string; grade: string; url: string | null;
+  labels: string[];
+  marked: string[];            // このラベルで Naoki が線を引いた・印を付けた部分
+  analysis: { why: string; hypo: string; idea: string };
+  used_in: string[];
+}
+
+export async function traceByLabel(env: Env, input: { label: string; grade_min?: "S" | "A" | "B" | "C" | "D"; limit?: number }) {
+  const uid = currentUserId(env);
+  const lb = input.label.trim();
+  const params = [`user_id=eq.${encodeURIComponent(uid)}`, "select=*",
+    `or=${encodeURIComponent(`(labels.cs.${`{"${lb}"}`},refs.cs.${`{"${lb}"}`})`)}`,
+    "order=grade.desc,created_at.desc", "limit=200"];
+  if (input.grade_min) params.push(`grade=gte.${GRADE_FROM[input.grade_min]}`);
+  const rows = await selectRows<Swipe>(env, `${TABLE}?${params.join("&")}`);
+  const items: TraceItem[] = rows.map(r => ({
+    id: r.id, title: r.title, grade: GRADE_LETTER[r.grade ?? 0] ?? "", url: r.source_url,
+    labels: [...new Set([...(r.labels ?? []), ...(r.refs ?? [])])],
+    marked: (r.highlights ?? []).filter(h => h.r === lb && h.t).map(h => h.t),
+    analysis: { why: r.reason ?? "", hypo: r.an_hypo ?? "", idea: r.an_idea ?? "" },
+    used_in: (r.used_log ?? []).map(u => u.w).filter(Boolean),
+  }));
+  const analysed = items.filter(i => i.analysis.why || i.analysis.hypo || i.analysis.idea || i.marked.length);
+  const byGrade: Record<string, number> = {};
+  for (const i of items) byGrade[i.grade || "なし"] = (byGrade[i.grade || "なし"] ?? 0) + 1;
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
+  return { label: lb, count: items.length, analysed: analysed.length, by_grade: byGrade, items: analysed.slice(0, limit) };
 }
 
 /* ── 1件取得（呼び出しのたびに +1） ──────────────────────────────────── */
@@ -503,7 +540,6 @@ export interface DraftInput {
 export async function fillAnalysis(env: Env, input: DraftInput): Promise<{ swipe: SwipeOut; filled: string[]; kept: string[] }> {
   const cfg = await loadSettings(env);
   const allowed = await allowedValues(env, cfg);
-  check("参考ポイント（refs）", input.refs, allowed.ref);
   check("ジャンル（genres）", input.genres, allowed.genre);
   const cur = await fetchWithoutCounting(env, input.id);
   const patch: Record<string, unknown> = { ai_ask: false };
@@ -516,7 +552,7 @@ export async function fillAnalysis(env: Env, input: DraftInput): Promise<{ swipe
   step("reason", "言語化", input.why);
   step("an_hypo", "仮説", input.hypo);
   step("an_idea", "用途抽出", input.idea);
-  if (input.refs?.length) { if ((cur.refs ?? []).length) kept.push("参考ポイント"); else { patch.refs = input.refs; filled.push("参考ポイント"); } }
+  // 2026-10-30：ラベルは Naoki が手で付ける。Claude の下書きではラベル（旧参考ポイント）を書かない
   if (input.genres?.length) { if ((cur.genres ?? []).length) kept.push("ジャンル"); else { patch.genres = input.genres; filled.push("ジャンル"); } }
   const row = await updateRow<Swipe>(env, TABLE, input.id, patch);
   return { swipe: toOut(cfg, row, false), filled, kept };

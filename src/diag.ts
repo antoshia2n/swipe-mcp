@@ -76,7 +76,7 @@ export async function handleDiag(_request: Request, env: Env): Promise<Response>
   return Response.json(
     {
       app: "swipe-mcp",
-      version: "1.1.0",
+      version: "1.3.0-trace",
       checked_at: new Date().toISOString(),
       summary: { total: checks.length, ok: checks.length - ng, ng },
       checks,
