@@ -182,7 +182,7 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
 
   server.tool(
     "swipe__list_tags",
-    "選べる値と置き場を件数つきで一覧する。種類・参考ポイント・ジャンル・ラベルの決まった値、評価、分析の段、置き場の表（id と名前）。足す・直す・探す前にこれを見て、ここにある値だけを使う。戻り値: { ok, labels, stages, grades, tables, old_topic_tags }",
+    "選べる値と置き場を件数つきで一覧する。種類・ジャンル・ラベル（旧参考ポイントを含む・各ラベルに Naoki が決めた分類 group が付く）の決まった値、評価、分析の段、置き場の表（id と名前）。足す・直す・探す前にこれを見て、ここにある値だけを使う。戻り値: { ok, labels, label_groups, stages, grades, tables, old_topic_tags }",
     {},
     async () => asMcpTextResult({ ok: true, ...(await listVocabulary(env)) }),
   );
