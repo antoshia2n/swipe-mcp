@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./index.js";
 import {
-  addSwipe, addContext, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, listPacks, getPack, STAGES,
+  addSwipe, addContext, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, listPacks, getPack, traceByLabel, STAGES,
 } from "./swipe-store.js";
 
 /**
@@ -131,13 +131,12 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
 
   server.tool(
     "swipe__fill_analysis",
-    "Claude が分析の下書きを入れる。空いている段（言語化・仮説・用途抽出）だけに書き、すでに書いてある段は書き換えない。参考ポイントとジャンルも、空のときだけ候補を入れる（決まった値の中から）。書いたら「Claude に分析を頼んだ」の印を外す。頼まれたものは swipe__search の ai_ask=true で探す。戻り値: { ok, filled, kept, swipe }",
+    "Claude が分析の下書きを入れる。空いている段（言語化・仮説・用途抽出）だけに書き、すでに書いてある段は書き換えない。ジャンルは空のときだけ候補を入れる（決まった値の中から）。ラベル（旧参考ポイント）と評価は Naoki が手で付けるので書かない。書いたら「Claude に分析を頼んだ」の印を外す。頼まれたものは swipe__search の ai_ask=true で探す。戻り値: { ok, filled, kept, swipe }",
     {
       id: z.string().min(1).describe("スワイプの ID"),
       why: z.string().optional().describe("言語化：なぜ良いか"),
       hypo: z.string().optional().describe("仮説：ほかでも効きそうな型"),
       idea: z.string().optional().describe("用途抽出：どこで・どう使うかを文章で"),
-      refs: z.array(z.string()).optional().describe("参考ポイントの候補"),
       genres: z.array(z.string()).optional().describe("ジャンルの候補"),
     },
     async (args) => {
@@ -168,6 +167,17 @@ export function registerSwipeTools(server: McpServer, env: Env): void {
     "素材パックを 1 つ読む（名前か ID）。「素材パック『○○』で書いて」と言われたらこれを呼ぶ。見本のスワイプは全文・分析・線つきで返し、handoff はそのまま執筆の指示に使える渡す文。見本の文をそのまま写さず、参考ポイントの部分だけを借りる。ref_count は増えない。戻り値: { ok, pack, handoff, items }",
     { name: z.string().min(1).describe("素材パックの名前（完全一致を優先、無ければ部分一致）か ID") },
     async (args) => asMcpTextResult({ ok: true, ...(await getPack(env, args.name)) }),
+  );
+
+  server.tool(
+    "swipe__trace",
+    "Naoki の分析をラベルでたどる（読むだけ・書かない・ref_count も増えない）。分析やリサーチは Naoki が行い、AI はそれを理解して再現・効率化する道具という決まりのための道具。ラベル 1 つを渡すと、そのラベルが付いた素材のうち Naoki が分析した・線を引いたものを評価の高い順に返す。marked はそのラベルで Naoki が線を引いた部分。書く前にこれで Naoki の見方を読み、その見方をなぞって書く。戻り値: { ok, label, count, analysed, by_grade, items }",
+    {
+      label: z.string().min(1).describe("ラベル（swipe__list_tags の labels.tag の値。旧参考ポイントの値もここ）"),
+      grade_min: GRADE.optional().describe("この評価以上だけ"),
+      limit: z.number().int().min(1).max(100).optional().describe("最大件数（既定 20）"),
+    },
+    async (args) => asMcpTextResult({ ok: true, ...(await traceByLabel(env, args)) }),
   );
 
   server.tool(
