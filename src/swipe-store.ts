@@ -91,6 +91,9 @@ interface Settings {
   folders: Array<{ id: string; name: string; parent: string | null }>;
   tables: Array<{ id: string; name: string; folder: string }>;
   labels: { shu: string[]; ref: string[]; genre: string[]; tag: string[] };
+  // 2026-10-30：ラベルの分類（画面の「ラベルを整える」）。1 段だけ
+  lgroups?: Array<{ id: string; name: string }>;
+  lgOf?: Record<string, string>;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -129,7 +132,10 @@ export async function loadSettings(env: Env): Promise<Settings> {
   return {
     folders: Array.isArray(d.folders) ? d.folders : DEFAULT_SETTINGS.folders,
     tables: d.tables,
-    labels: { ...DEFAULT_SETTINGS.labels, ...(d.labels ?? {}) },
+    // 参考ポイント（ref）はラベルに統一したので既定値を足さない。保存に残っている値だけ読む
+    labels: { ...DEFAULT_SETTINGS.labels, ...(d.labels ?? {}), ref: d.labels?.ref ?? [] },
+    lgroups: Array.isArray(d.lgroups) ? d.lgroups : [],
+    lgOf: d.lgOf && typeof d.lgOf === "object" ? d.lgOf : {},
   };
 }
 
@@ -590,10 +596,12 @@ export async function listVocabulary(env: Env) {
   return {
     labels: {
       shu: count(cfg.labels.shu, rows.map(r => r.shu).filter((v): v is string => !!v)),
-      refs: count(cfg.labels.ref, rows.flatMap(r => r.refs ?? [])),
       genres: count(cfg.labels.genre, rows.flatMap(r => r.genres ?? [])),
-      labels: count(cfg.labels.tag, rows.flatMap(r => r.labels ?? [])),
+      // 2026-10-30：参考ポイントはラベルに統一。各ラベルに分類（group）を付ける
+      labels: count([...new Set([...cfg.labels.tag, ...cfg.labels.ref])], rows.flatMap(r => [...new Set([...(r.labels ?? []), ...(r.refs ?? [])])]))
+        .map(x => ({ ...x, group: (cfg.lgroups ?? []).find(g => g.id === cfg.lgOf?.[x.value])?.name ?? "分類なし" })),
     },
+    label_groups: [...(cfg.lgroups ?? []).map(g => g.name), "分類なし"],
     stages: STAGES,
     grades: ["S", "A", "B", "C", "D"],
     tables: [
