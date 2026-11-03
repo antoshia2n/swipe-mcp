@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./index.js";
 import {
-  addSwipe, addContext, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, listPacks, getPack, traceByLabel, STAGES,
+  addSwipe, addContext, DuplicateError, searchSwipes, getSwipe, updateSwipe, fillAnalysis, markUsed, listVocabulary, listPacks, getPack, traceByLabel, STAGES,
 } from "./swipe-store.js";
 
 /**
@@ -42,16 +42,22 @@ const addShape = {
   source_type: SOURCE_TYPE.optional().describe("媒体。省略時は URL から自動"),
   excerpt: z.string().optional().describe("一覧に出す短い抜粋。省略時は自動"),
   visibility: VISIBILITY.optional(),
+  allow_duplicate: z.boolean().optional().describe("true のときだけ、同じ URL がすでにあっても 2 件目を保存する（既定は保存せず既にある 1 件を返す）"),
 };
 
 export function registerSwipeTools(server: McpServer, env: Env): void {
   server.tool(
     "swipe__add",
-    "スワイプくんに 1 件足す。url か body のどちらかが必要。ラベル（shu / refs / genres / labels）と置き場（table）は決まった値の中からだけ指定できる（先に swipe__list_tags で確かめる）。分析（reason / hypo / idea）は空でもよい。戻り値: { ok, ai_enriched, swipe }",
+    "スワイプくんに 1 件足す。url か body のどちらかが必要。ラベル（shu / refs / genres / labels）と置き場（table）は決まった値の中からだけ指定できる（先に swipe__list_tags で確かめる）。分析（reason / hypo / idea）は空でもよい。同じ URL がすでに保存されていれば保存せず、{ ok: false, 既にある } を返す（2 件目が要るときだけ allow_duplicate: true）。戻り値: { ok, ai_enriched, swipe }",
     addShape,
     async (args) => {
-      const { swipe, ai_enriched } = await addSwipe(env, args);
-      return asMcpTextResult({ ok: true, ai_enriched, swipe });
+      try {
+        const { swipe, ai_enriched } = await addSwipe(env, args);
+        return asMcpTextResult({ ok: true, ai_enriched, swipe });
+      } catch (e) {
+        if (e instanceof DuplicateError) return asMcpTextResult({ ok: false, message: e.message, 既にある: e.existing });
+        throw e;
+      }
     },
   );
 
