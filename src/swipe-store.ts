@@ -252,6 +252,14 @@ export interface AddInput {
   visibility?: string;
   topic_tags?: string[];
   content_axis?: string;
+  /** 2026-11-03：true のときだけ、同じ URL がすでにあっても 2 件目を保存する */
+  allow_duplicate?: boolean;
+}
+
+export class DuplicateError extends Error {
+  constructor(public readonly existing: { id: string; title: string; created_at: string; table_id: string | null }) {
+    super(`duplicate_url: 同じ URL がすでに保存されています（${existing.title}・${existing.created_at.slice(0, 10)}・id ${existing.id}）。保存していません。それでも 2 件目が要るときだけ allow_duplicate: true で呼んでください`);
+  }
 }
 
 async function fetchPageMeta(env: Env, url: string): Promise<{ title: string; description: string }> {
@@ -298,10 +306,40 @@ function shuFromSource(src: string): string | null {
 
 export interface AddResult { swipe: SwipeOut; ai_enriched: boolean }
 
+/**
+ * 2026-11-03：同じ URL を見分ける鍵（画面の src/engine/data.js の sameKey と同じ規則・コンテンツ担当の申し送り 5）。
+ * X はポストの番号、YouTube は動画の番号、ほかは https:// と www. と ? # 以降と末尾の / を外して小文字にしたもの
+ */
+export function sameKey(url: string): string {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  const x = /(?:x|twitter)\.com\/[^/]+\/status\/(\d+)/i.exec(u);
+  if (x) return "x:" + x[1];
+  const y = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([\w-]{11})/i.exec(u);
+  if (y) return "yt:" + y[1];
+  return u.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
+}
+
+/** 同じ URL ですでに保存されているスワイプ（無ければ null） */
+export async function findSameUrl(env: Env, url: string): Promise<{ id: string; title: string; created_at: string; table_id: string | null } | null> {
+  const k = sameKey(url);
+  if (!k) return null;
+  const core = k.startsWith("x:") ? `/status/${k.slice(2)}` : k.startsWith("yt:") ? k.slice(3) : k;
+  const uid = currentUserId(env);
+  const rows = await selectRows<{ id: string; title: string; created_at: string; table_id: string | null; source_url: string | null }>(
+    env, `${TABLE}?user_id=eq.${encodeURIComponent(uid)}&source_url=ilike.*${encodeURIComponent(core.replace(/[*%]/g, ""))}*&select=id,title,created_at,table_id,source_url&order=created_at.asc&limit=20`,
+  );
+  return rows.find(r => sameKey(r.source_url ?? "") === k) ?? null;
+}
+
 export async function addSwipe(env: Env, input: AddInput, ctx?: { cfg: Settings; allowed: Allowed }): Promise<AddResult> {
   const url = (input.url ?? "").trim();
   const body = (input.body ?? "").trim();
   if (!url && !body) throw new Error("substance_required: url か body のどちらかが必要です");
+  if (url && !input.allow_duplicate) {
+    const dup = await findSameUrl(env, url);
+    if (dup) throw new DuplicateError(dup);
+  }
 
   const cfg = ctx?.cfg ?? await loadSettings(env);
   const allowed = ctx?.allowed ?? await allowedValues(env, cfg);
